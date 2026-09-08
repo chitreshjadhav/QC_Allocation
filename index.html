@@ -50,9 +50,69 @@ function parseXML(s) { const d=new DOMParser().parseFromString(s,'application/xm
 function columnNumber(ref) { let n=0; for(const c of ref.replace(/[0-9]/g,'')) n=n*26+c.charCodeAt(0)-64; return n-1; }
 function columnName(n) { let s=''; for(n++;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s; return s; }
 function dateFromSerial(v,epoch1904=false) { const date=new Date(Date.UTC(1899,11,30)+Math.round((Number(v)+(epoch1904?1462:0))*86400000)); return Number.isNaN(date.valueOf())?String(v):date.toISOString().slice(0,10); }
-const DATE_FORMAT_IDS=new Set([14,15,16,17,18,19,20,21,22,45,46,47]);
-function isDateCell(cell){if(!cell)return false;if(cell.type==='d')return true;if(cell.type&&cell.type!=='n')return false;const raw=String(cell.v).trim();if(!raw||!Number.isFinite(Number(raw)))return false;const f=cell.fmt||{};if(DATE_FORMAT_IDS.has(f.id))return true;const code=String(f.code||'').replace(/\[[^\]]*\]/g,'').replace(/"[^"]*"/g,'');return /[ymd]/i.test(code);}
-function cellText(cell,epoch1904){if(!cell)return '';if(cell.type==='d')return String(cell.v).slice(0,10);if(isDateCell(cell))return dateFromSerial(cell.v,epoch1904);return String(cell.v);}
+const DATE_ONLY_IDS=new Set([14,15,16,17]);
+const TIME_ONLY_IDS=new Set([18,19,20,21,45,46,47]);
+const DATETIME_IDS=new Set([22]);
+const pad2=n=>String(Math.floor(Math.abs(n))).padStart(2,'0');
+// '' | 'date' | 'datetime' | 'time'. Elapsed formats such as [h]:mm:ss are durations,
+// not clock times, and must not be read as dates.
+function numberFormatKind(cell){
+ const f=cell.fmt||{};
+ if(TIME_ONLY_IDS.has(f.id))return 'time';
+ if(DATETIME_IDS.has(f.id))return 'datetime';
+ if(DATE_ONLY_IDS.has(f.id))return 'date';
+ const code=String(f.code||'').replace(/"[^"]*"/g,'');
+ if(!code)return '';
+ const elapsed=/\[(h+|m+|s+)\]/i.test(code);
+ const bare=code.replace(/\[[^\]]*\]/g,'');
+ const hasDate=/[yd]/i.test(bare);
+ const hasTime=elapsed||/[hs]/i.test(bare);
+ if(elapsed&&!hasDate)return 'time';
+ if(hasDate&&hasTime)return 'datetime';
+ if(hasDate)return 'date';
+ if(hasTime)return 'time';
+ return '';
+}
+function serialToParts(v,epoch1904){
+ const serial=Number(v)+(epoch1904?1462:0);
+ const ms=Math.round(serial*86400000);
+ const date=new Date(Date.UTC(1899,11,30)+ms);
+ return Number.isNaN(date.valueOf())?null:date;
+}
+function dateTimeFromSerial(v,epoch1904){
+ const d=serialToParts(v,epoch1904);
+ if(!d)return String(v);
+ return d.toISOString().slice(0,10)+' '+pad2(d.getUTCHours())+':'+pad2(d.getUTCMinutes())+':'+pad2(d.getUTCSeconds());
+}
+function durationFromSerial(v){
+ const total=Math.round(Math.abs(Number(v))*86400);
+ if(!Number.isFinite(total))return String(v);
+ return (Number(v)<0?'-':'')+pad2(Math.floor(total/3600))+':'+pad2(Math.floor(total/60)%60)+':'+pad2(total%60);
+}
+function cellText(cell,epoch1904){
+ if(!cell)return '';
+ if(cell.type==='d')return String(cell.v).replace('T',' ').slice(0,19);
+ const raw=String(cell.v).trim();
+ if(!raw)return '';
+ if(cell.type&&cell.type!=='n')return String(cell.v);
+ if(!Number.isFinite(Number(raw)))return String(cell.v);
+ const kind=numberFormatKind(cell);
+ if(kind==='date')return dateFromSerial(cell.v,epoch1904);
+ if(kind==='datetime')return dateTimeFromSerial(cell.v,epoch1904);
+ if(kind==='time')return durationFromSerial(cell.v);
+ return String(cell.v);
+}
+// Written back as real Excel numbers so the output sorts and aggregates properly.
+const OUT_DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
+const OUT_DATETIME_RE=/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+const OUT_DURATION_RE=/^\d{1,6}:[0-5]\d:[0-5]\d$/;
+function excelNumber(v){
+ const s=String(v);
+ if(OUT_DATETIME_RE.test(s)){const d=Date.parse(s.replace(' ','T')+'Z');if(Number.isFinite(d))return {value:(d-Date.UTC(1899,11,30))/86400000,style:3};}
+ if(OUT_DATE_RE.test(s)){const d=Date.parse(s+'T00:00:00Z');if(Number.isFinite(d))return {value:(d-Date.UTC(1899,11,30))/86400000,style:2};}
+ if(OUT_DURATION_RE.test(s)){const p=s.split(':');return {value:(Number(p[0])*3600+Number(p[1])*60+Number(p[2]))/86400,style:4};}
+ return null;
+}
 function validateNames(input) {
  const names=(Array.isArray(input)?input:String(input).split(/\r?\n/)).map(x=>String(x).trim()).filter(Boolean);
  if(!names.length) throw Error('Add at least one QC name in Settings.');
@@ -130,12 +190,12 @@ async function exportWorkbook(rows,names,batches){
  const zip=new JSZip(), ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
  const strCell=(value,ref,style=0)=>'<c r="'+ref+'" t="inlineStr" s="'+style+'"><is><t xml:space="preserve">'+xmlEsc(value)+'</t></is></c>';
  const rowXML=(arr,r,header=false)=>'<row r="'+r+'" ht="'+(header?28:22)+'" customHeight="1">'+arr.map((v,c)=>{
-  if(!header&&/^\d{4}-\d{2}-\d{2}$/.test(v)){const d=Date.parse(v+'T00:00:00Z');if(Number.isFinite(d))return '<c r="'+columnName(c)+r+'" s="2"><v>'+((d-Date.UTC(1899,11,30))/86400000)+'</v></c>';}
+  if(!header){const num=excelNumber(v);if(num)return '<c r="'+columnName(c)+r+'" s="'+num.style+'"><v>'+num.value+'</v></c>';}
   return strCell(v,columnName(c)+r,header?1:0);
  }).join('')+'</row>';
  const pick=(x,n)=>{const f=x.full||{};if(Object.prototype.hasOwnProperty.call(f,n))return f[n];const k=Object.keys(f).find(h=>norm(h)===norm(n));return k===undefined?'':f[k];};
- const widthsFor=hs=>hs.map(n=>Math.min(46,Math.max(12,String(n).length+4)));
- const STYLES='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+ const widthsFor=hs=>hs.map(n=>/time|date/i.test(String(n))?22:Math.min(46,Math.max(12,String(n).length+4)));
+ const STYLES='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/><numFmt numFmtId="165" formatCode="mm-dd-yyyy hh:mm:ss"/><numFmt numFmtId="166" formatCode="[hh]:mm:ss"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
  const rels=a=>'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+a.map(([id,type,target])=>'<Relationship Id="'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'+type+'" Target="'+target+'"/>').join('')+'</Relationships>';
  const sheetXML=(body,widths,extra='')=>'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="'+ns+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>'+widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols><sheetData>'+body+'</sheetData>'+extra+'</worksheet>';
  const contentTypes=n=>'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+Array.from({length:n},(_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>';
@@ -161,12 +221,12 @@ async function exportCollated(batches){
  const zip=new JSZip(), ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
  const strCell=(value,ref,style=0)=>'<c r="'+ref+'" t="inlineStr" s="'+style+'"><is><t xml:space="preserve">'+xmlEsc(value)+'</t></is></c>';
  const rowXML=(arr,r,header=false)=>'<row r="'+r+'" ht="'+(header?28:22)+'" customHeight="1">'+arr.map((v,c)=>{
-  if(!header&&/^\d{4}-\d{2}-\d{2}$/.test(v)){const d=Date.parse(v+'T00:00:00Z');if(Number.isFinite(d))return '<c r="'+columnName(c)+r+'" s="2"><v>'+((d-Date.UTC(1899,11,30))/86400000)+'</v></c>';}
+  if(!header){const num=excelNumber(v);if(num)return '<c r="'+columnName(c)+r+'" s="'+num.style+'"><v>'+num.value+'</v></c>';}
   return strCell(v,columnName(c)+r,header?1:0);
  }).join('')+'</row>';
  const pick=(x,n)=>{const f=x.full||{};if(Object.prototype.hasOwnProperty.call(f,n))return f[n];const k=Object.keys(f).find(h=>norm(h)===norm(n));return k===undefined?'':f[k];};
- const widthsFor=hs=>hs.map(n=>Math.min(46,Math.max(12,String(n).length+4)));
- const STYLES='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+ const widthsFor=hs=>hs.map(n=>/time|date/i.test(String(n))?22:Math.min(46,Math.max(12,String(n).length+4)));
+ const STYLES='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/><numFmt numFmtId="165" formatCode="mm-dd-yyyy hh:mm:ss"/><numFmt numFmtId="166" formatCode="[hh]:mm:ss"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
  const rels=a=>'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+a.map(([id,type,target])=>'<Relationship Id="'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'+type+'" Target="'+target+'"/>').join('')+'</Relationships>';
  const sheetXML=(body,widths,extra='')=>'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="'+ns+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>'+widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols><sheetData>'+body+'</sheetData>'+extra+'</worksheet>';
  const contentTypes=n=>'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+Array.from({length:n},(_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>';

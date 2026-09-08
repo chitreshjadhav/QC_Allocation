@@ -32,8 +32,18 @@ Both keep the columns of your source workbooks rather than a fixed subset.
 Where workbooks have different columns, the collated sheet is the union of them, matched
 by header name, with blanks where a file does not have a column.
 
-Dates are written as real Excel dates in both, in whichever column they appear — the
-reader recognises a date by its number format, not by position.
+Dates and times are written as real Excel values in both, in whichever column they
+appear — recognised by each cell's number format, not by column name or position:
+
+| Kind | Written as | Shown as |
+|---|---|---|
+| Date | Excel date | `dd-mmm-yyyy` |
+| Date **and** time — start and end times | Excel date-time | `mm-dd-yyyy hh:mm:ss` |
+| Elapsed time — total time | Excel duration | `hh:mm:ss` |
+
+Because they are real values rather than text, they sort and subtract correctly in Excel.
+Totals use an elapsed format, so a duration beyond 24 hours reads `30:00:00` rather than
+wrapping to `06:00:00`.
 
 Collating needs only that workbooks have been added — no allocation required. The
 on-screen preview still shows the key columns so the table stays readable; the full
