@@ -50,6 +50,9 @@ function parseXML(s) { const d=new DOMParser().parseFromString(s,'application/xm
 function columnNumber(ref) { let n=0; for(const c of ref.replace(/[0-9]/g,'')) n=n*26+c.charCodeAt(0)-64; return n-1; }
 function columnName(n) { let s=''; for(n++;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s; return s; }
 function dateFromSerial(v,epoch1904=false) { const date=new Date(Date.UTC(1899,11,30)+Math.round((Number(v)+(epoch1904?1462:0))*86400000)); return Number.isNaN(date.valueOf())?String(v):date.toISOString().slice(0,10); }
+const DATE_FORMAT_IDS=new Set([14,15,16,17,18,19,20,21,22,45,46,47]);
+function isDateCell(cell){if(!cell)return false;if(cell.type==='d')return true;if(cell.type&&cell.type!=='n')return false;const raw=String(cell.v).trim();if(!raw||!Number.isFinite(Number(raw)))return false;const f=cell.fmt||{};if(DATE_FORMAT_IDS.has(f.id))return true;const code=String(f.code||'').replace(/\[[^\]]*\]/g,'').replace(/"[^"]*"/g,'');return /[ymd]/i.test(code);}
+function cellText(cell,epoch1904){if(!cell)return '';if(cell.type==='d')return String(cell.v).slice(0,10);if(isDateCell(cell))return dateFromSerial(cell.v,epoch1904);return String(cell.v);}
 function validateNames(input) {
  const names=(Array.isArray(input)?input:String(input).split(/\r?\n/)).map(x=>String(x).trim()).filter(Boolean);
  if(!names.length) throw Error('Add at least one QC name in Settings.');
@@ -79,17 +82,20 @@ async function readWorkbook(data,filename) {
  const epoch1904=['1','true'].includes(tags(wb,'workbookPr')[0]?.getAttribute('date1904'));
  const shared=zip.file('xl/sharedStrings.xml')?tags(await read('xl/sharedStrings.xml'),'si').map(si=>tags(si,'t').map(t=>t.textContent).join('')):[];
  const formats={};let styles=[];
- if(zip.file('xl/styles.xml')){const st=await read('xl/styles.xml');for(const f of tags(st,'numFmt'))formats[f.getAttribute('numFmtId')]=f.getAttribute('formatCode');styles=tags(tags(st,'cellXfs')[0]??st,'xf').map(f=>formats[f.getAttribute('numFmtId')]??'');}
+ if(zip.file('xl/styles.xml')){const st=await read('xl/styles.xml');for(const f of tags(st,'numFmt'))formats[f.getAttribute('numFmtId')]=f.getAttribute('formatCode');styles=tags(tags(st,'cellXfs')[0]??st,'xf').map(f=>({id:Number(f.getAttribute('numFmtId')||0),code:formats[f.getAttribute('numFmtId')]??''}));}
  const relations=Object.fromEntries(tags(rel,'Relationship').filter(r=>r.getAttribute('TargetMode')!=='External').map(r=>[r.getAttribute('Id'),r.getAttribute('Target')]));
- const rows=[],sheets=[],scannedRows=[]; let scanned=0,excluded=0,matched=0;
+ const rows=[],sheets=[],scannedRows=[],columnOrder=[]; let scanned=0,excluded=0,matched=0;
  for(const sheet of tags(wb,'sheet')) {
   const target=relations[sheet.getAttribute('r:id')]; if(!target)continue;
   const parts=(target.startsWith('/')?target.slice(1):'xl/'+target).split('/'),clean=[];for(const p of parts){if(p==='..')clean.pop();else if(p!=='.')clean.push(p);}
-  const document=await read(clean.join('/')); const sheetRows=tags(document,'row');let mapping=null,headerAt=-1;
+  const document=await read(clean.join('/')); const sheetRows=tags(document,'row');let mapping=null,headerAt=-1,columns=null;
   const decode=c=>{const type=c.getAttribute('t'),value=txt(c,'v'),formula=tags(c,'f').length>0;let v=type==='s'?(shared[Number(value)]??''):type==='inlineStr'?tags(c,'t').map(x=>x.textContent).join(''):value;
-   const format=styles[Number(c.getAttribute('s')||0)];if((!type||type==="n")&&/^0+$/.test(format)&&/^\d+$/.test(v))v=v.padStart(format.length,'0');return {v,type,formula,uncached:formula&&!tags(c,'v').length};};
+   const style=styles[Number(c.getAttribute('s')||0)]||{id:0,code:''};const format=style.code||'';if((!type||type==="n")&&/^0+$/.test(format)&&/^\d+$/.test(v))v=v.padStart(format.length,'0');return {v,type,formula,fmt:style,uncached:formula&&!tags(c,'v').length};};
   for(let i=0;i<Math.min(sheetRows.length,100);i++){const cells=tags(sheetRows[i],'c'); const byHeader=new Map();for(const c of cells){const key=norm(decode(c).v);if(key)byHeader.set(key,[...(byHeader.get(key)||[]),columnNumber(c.getAttribute('r'))]);}
-   if([...HEADERS,'Review Type'].every(h=>byHeader.has(norm(h)))){if([...HEADERS,'Review Type'].some(h=>byHeader.get(norm(h)).length!==1))throw Error('Duplicate required column in '+sheet.getAttribute('name')+'.');mapping=[...HEADERS,'Review Type'].map(h=>byHeader.get(norm(h))[0]);headerAt=i;break;}}
+   if([...HEADERS,'Review Type'].every(h=>byHeader.has(norm(h)))){if([...HEADERS,'Review Type'].some(h=>byHeader.get(norm(h)).length!==1))throw Error('Duplicate required column in '+sheet.getAttribute('name')+'.');mapping=[...HEADERS,'Review Type'].map(h=>byHeader.get(norm(h))[0]);headerAt=i;
+    columns=cells.map(c=>({col:columnNumber(c.getAttribute('r')),name:String(decode(c).v).trim()})).filter(x=>x.name).sort((a,b)=>a.col-b.col);
+    for(const x of columns)if(!columnOrder.some(n=>norm(n)===norm(x.name)))columnOrder.push(x.name);
+    break;}}
   if(!mapping){sheets.push({name:sheet.getAttribute('name'),status:'Skipped: required headers not found',eligible:0});continue;}
   matched++;let count=0;
   for(const row of sheetRows.slice(headerAt+1)){
@@ -102,29 +108,45 @@ async function readWorkbook(data,filename) {
    const record=values.slice(0,6).map(c=>String(c.v));
    if(record[0]&&(!values[0].type||values[0].type==='n')&&Number.isFinite(Number(record[0])))record[0]=dateFromSerial(record[0],epoch1904);
    if(values[0].type==='d')record[0]=record[0].slice(0,10);
-   const entry={values:record,reviewType:String(values[6].v),status:collateStatus,source:filename,sheet:sheet.getAttribute('name'),row:Number(row.getAttribute('r'))};scannedRows.push(entry);if(collateStatus!=='Eligible'){excluded++;continue;}rows.push(entry);count++;
+   const full={};for(const x of columns)full[x.name]=cellText(cells.get(x.col),epoch1904);
+   const entry={values:record,full:full,reviewType:String(values[6].v),status:collateStatus,source:filename,sheet:sheet.getAttribute('name'),row:Number(row.getAttribute('r'))};scannedRows.push(entry);if(collateStatus!=='Eligible'){excluded++;continue;}rows.push(entry);count++;
   }
   sheets.push({name:sheet.getAttribute('name'),status:'Imported',eligible:count});
  }
  if(!matched)throw Error('No sheet contains all seven required source headers: '+[...HEADERS,'Review Type'].join(', ')+'.');
- return {name:filename,rows,scannedRows,scanned,excluded,sheets};
+ return {name:filename,rows,scannedRows,columns:columnOrder,scanned,excluded,sheets};
 }
-async function exportWorkbook(rows,names){
+async function exportWorkbook(rows,names,batches){
  names=validateNames(names);if(!rows.length)throw Error('Generate an allocation first.');if(rows.some(r=>!names.includes(r.qc)))throw Error('Every allocation must use a QC name from Settings.');
+ let head=[];for(const b of (batches||[]))for(const n of (b.columns||[]))if(!head.some(h=>norm(h)===norm(n)))head.push(n);
+ if(!head.length)head=[...HEADERS];
+ const at=n=>head.findIndex(h=>norm(h)===norm(n));
+ if(at('QC Comments')===-1)head.push('QC Comments');
+ if(at('QC Name')===-1)head.splice(at('QC Comments'),0,'QC Name');
+ else if(at('QC Name')>at('QC Comments')){const moved=head.splice(at('QC Name'),1)[0];head.splice(at('QC Comments'),0,moved);}
+ head=head.slice(0,at('QC Comments')+1);
+ const qcCol=at('QC Name'),qcLetter=columnName(qcCol),lastLetter=columnName(head.length-1),lastRow=rows.length+1;
+
  const zip=new JSZip(), ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
  const strCell=(value,ref,style=0)=>'<c r="'+ref+'" t="inlineStr" s="'+style+'"><is><t xml:space="preserve">'+xmlEsc(value)+'</t></is></c>';
- const rowXML=(arr,r,header=false)=>'<row r="'+r+'" ht="'+(header?28:24)+'" customHeight="1">'+arr.map((v,c)=>{
-  if(!header&&c===0&&/^\d{4}-\d{2}-\d{2}$/.test(v)){const date=Date.parse(v+'T00:00:00Z');if(Number.isFinite(date))return '<c r="A'+r+'" s="2"><v>'+((date-Date.UTC(1899,11,30))/86400000)+'</v></c>';}
+ const rowXML=(arr,r,header=false)=>'<row r="'+r+'" ht="'+(header?28:22)+'" customHeight="1">'+arr.map((v,c)=>{
+  if(!header&&/^\d{4}-\d{2}-\d{2}$/.test(v)){const d=Date.parse(v+'T00:00:00Z');if(Number.isFinite(d))return '<c r="'+columnName(c)+r+'" s="2"><v>'+((d-Date.UTC(1899,11,30))/86400000)+'</v></c>';}
   return strCell(v,columnName(c)+r,header?1:0);
  }).join('')+'</row>';
- const sheet=(body,widths,extra='')=>'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="'+ns+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="24"/><cols>'+widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols><sheetData>'+body+'</sheetData>'+extra+'</worksheet>';
- zip.file('xl/worksheets/sheet1.xml',sheet(rowXML([...HEADERS,'QC Name'],1,true)+rows.map((r,i)=>rowXML([...r.values,r.qc],i+2)).join(''),[15,25,25,24,22,56,26],'<autoFilter ref="A1:G'+(rows.length+1)+'"/><dataValidations count="1"><dataValidation type="list" allowBlank="0" showDropDown="0" showErrorMessage="1" errorStyle="stop" errorTitle="Choose a QC name" error="Select a reviewer from the Settings list." sqref="G2:G'+(rows.length+1)+'"><formula1>QCNames</formula1></dataValidation></dataValidations>'));
- zip.file('xl/worksheets/sheet2.xml',sheet(rowXML(['QC Name'],1,true)+names.map((n,i)=>'<row r="'+(i+2)+'">'+strCell(n,'A'+(i+2))+'</row>').join(''),[30]));
- zip.file('xl/workbook.xml','<?xml version="1.0"?><workbook xmlns="'+ns+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="QC Allocation" sheetId="1" r:id="rId1"/><sheet name="Settings" sheetId="2" r:id="rId2"/></sheets><definedNames><definedName name="QCNames">\'Settings\'!$A$2:$A$'+(names.length+1)+'</definedName></definedNames></workbook>');
- zip.file('xl/styles.xml','<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>');
+ const pick=(x,n)=>{const f=x.full||{};if(Object.prototype.hasOwnProperty.call(f,n))return f[n];const k=Object.keys(f).find(h=>norm(h)===norm(n));return k===undefined?'':f[k];};
+ const widthsFor=hs=>hs.map(n=>Math.min(46,Math.max(12,String(n).length+4)));
+ const STYLES='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
  const rels=a=>'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+a.map(([id,type,target])=>'<Relationship Id="'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'+type+'" Target="'+target+'"/>').join('')+'</Relationships>';
- zip.file('_rels/.rels',rels([['rId1','officeDocument','xl/workbook.xml']]));zip.file('xl/_rels/workbook.xml.rels',rels([['rId1','worksheet','worksheets/sheet1.xml'],['rId2','worksheet','worksheets/sheet2.xml'],['rId3','styles','styles.xml']]));
- zip.file('[Content_Types].xml','<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+ const sheetXML=(body,widths,extra='')=>'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="'+ns+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>'+widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols><sheetData>'+body+'</sheetData>'+extra+'</worksheet>';
+ const contentTypes=n=>'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+Array.from({length:n},(_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>';
+ const body=rowXML(head,1,true)+rows.map((r,i)=>rowXML(head.map((n,ci)=>ci===qcCol?r.qc:pick(r,n)),i+2)).join('');
+ zip.file('xl/worksheets/sheet1.xml',sheetXML(body,widthsFor(head),'<autoFilter ref="A1:'+lastLetter+lastRow+'"/><dataValidations count="1"><dataValidation type="list" allowBlank="0" showDropDown="0" showErrorMessage="1" errorStyle="stop" errorTitle="Choose a QC name" error="Select a reviewer from the Settings list." sqref="'+qcLetter+'2:'+qcLetter+lastRow+'"><formula1>QCNames</formula1></dataValidation></dataValidations>'));
+ zip.file('xl/worksheets/sheet2.xml',sheetXML(rowXML(['QC Name'],1,true)+names.map((n,i)=>'<row r="'+(i+2)+'">'+strCell(n,'A'+(i+2))+'</row>').join(''),[30]));
+ zip.file('xl/workbook.xml','<?xml version="1.0"?><workbook xmlns="'+ns+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="QC Allocation" sheetId="1" r:id="rId1"/><sheet name="Settings" sheetId="2" r:id="rId2"/></sheets><definedNames><definedName name="QCNames">\'Settings\'!$A$2:$A$'+(names.length+1)+'</definedName></definedNames></workbook>');
+ zip.file('xl/styles.xml',STYLES);
+ zip.file('_rels/.rels',rels([['rId1','officeDocument','xl/workbook.xml']]));
+ zip.file('xl/_rels/workbook.xml.rels',rels([['rId1','worksheet','worksheets/sheet1.xml'],['rId2','worksheet','worksheets/sheet2.xml'],['rId3','styles','styles.xml']]));
+ zip.file('[Content_Types].xml',contentTypes(2));
  return zip.generateAsync({type:'uint8array',compression:'DEFLATE'});
 }
 </script><script>
@@ -133,22 +155,28 @@ async function exportCollated(batches){
  if(!batches.length)throw Error('Add at least one workbook first.');
  const src=batches.flatMap(b=>b.scannedRows||[]);
  if(!src.length)throw Error('No source rows were found in this batch.');
+ const head=[];for(const b of batches)for(const n of (b.columns||[]))if(!head.some(h=>norm(h)===norm(n)))head.push(n);
+ if(!head.length)throw Error('No columns were found in these workbooks.');
+
  const zip=new JSZip(), ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
- const head=[...HEADERS,'Review Type','Status','Source File','Sheet','Row'];
  const strCell=(value,ref,style=0)=>'<c r="'+ref+'" t="inlineStr" s="'+style+'"><is><t xml:space="preserve">'+xmlEsc(value)+'</t></is></c>';
  const rowXML=(arr,r,header=false)=>'<row r="'+r+'" ht="'+(header?28:22)+'" customHeight="1">'+arr.map((v,c)=>{
-  if(!header&&c===0&&/^\d{4}-\d{2}-\d{2}$/.test(v)){const d=Date.parse(v+'T00:00:00Z');if(Number.isFinite(d))return '<c r="A'+r+'" s="2"><v>'+((d-Date.UTC(1899,11,30))/86400000)+'</v></c>';}
+  if(!header&&/^\d{4}-\d{2}-\d{2}$/.test(v)){const d=Date.parse(v+'T00:00:00Z');if(Number.isFinite(d))return '<c r="'+columnName(c)+r+'" s="2"><v>'+((d-Date.UTC(1899,11,30))/86400000)+'</v></c>';}
   return strCell(v,columnName(c)+r,header?1:0);
  }).join('')+'</row>';
- const body=rowXML(head,1,true)+src.map((x,i)=>rowXML([...x.values,x.reviewType||'',x.status||'',x.source,x.sheet,String(x.row)],i+2)).join('');
- const widths=[15,18,26,22,20,50,18,36,32,16,8];
- zip.file('xl/worksheets/sheet1.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="'+ns+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>'+widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols><sheetData>'+body+'</sheetData><autoFilter ref="A1:'+columnName(head.length-1)+(src.length+1)+'"/></worksheet>');
- zip.file('xl/workbook.xml','<?xml version="1.0"?><workbook xmlns="'+ns+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Collated Source" sheetId="1" r:id="rId1"/></sheets></workbook>');
- zip.file('xl/styles.xml','<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>');
+ const pick=(x,n)=>{const f=x.full||{};if(Object.prototype.hasOwnProperty.call(f,n))return f[n];const k=Object.keys(f).find(h=>norm(h)===norm(n));return k===undefined?'':f[k];};
+ const widthsFor=hs=>hs.map(n=>Math.min(46,Math.max(12,String(n).length+4)));
+ const STYLES='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
  const rels=a=>'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+a.map(([id,type,target])=>'<Relationship Id="'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'+type+'" Target="'+target+'"/>').join('')+'</Relationships>';
+ const sheetXML=(body,widths,extra='')=>'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="'+ns+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>'+widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols><sheetData>'+body+'</sheetData>'+extra+'</worksheet>';
+ const contentTypes=n=>'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+Array.from({length:n},(_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>';
+ const body=rowXML(head,1,true)+src.map((x,i)=>rowXML(head.map(n=>pick(x,n)),i+2)).join('');
+ zip.file('xl/worksheets/sheet1.xml',sheetXML(body,widthsFor(head),'<autoFilter ref="A1:'+columnName(head.length-1)+(src.length+1)+'"/>'));
+ zip.file('xl/workbook.xml','<?xml version="1.0"?><workbook xmlns="'+ns+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Collated" sheetId="1" r:id="rId1"/></sheets></workbook>');
+ zip.file('xl/styles.xml',STYLES);
  zip.file('_rels/.rels',rels([['rId1','officeDocument','xl/workbook.xml']]));
  zip.file('xl/_rels/workbook.xml.rels',rels([['rId1','worksheet','worksheets/sheet1.xml'],['rId2','styles','styles.xml']]));
- zip.file('[Content_Types].xml','<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+ zip.file('[Content_Types].xml',contentTypes(1));
  return zip.generateAsync({type:'uint8array',compression:'DEFLATE'});
 }
 const INITIAL=[];
@@ -180,7 +208,7 @@ function registerTools(){const ctx=document.modelContext;if(!ctx?.registerTool)r
 $('qcPercentage').oninput=()=>{try{setPercentage($('qcPercentage').value);}catch(e){message(e.message,true);}};
 $('settingsToggle').onclick=()=>settings($('settings').hidden);$('closeSettings').onclick=()=>settings(false);$('saveSettings').onclick=()=>{try{setNames($('names').value);settings(false);}catch(e){message(e.message,true);}};
 $('allocate').onclick=()=>{try{generate();}catch(e){message(e.message,true);if(!qcNames.length)settings(true);}};$('choose').onclick=()=>$('files').click();$('files').onchange=e=>importFiles(Array.from(e.target.files));$('clear').onclick=()=>{batches=[];errors=[];allocation=[];page=0;render();message('Batch cleared. Add workbooks for your next allocation.');};$('prev').onclick=()=>{page--;render();};$('next').onclick=()=>{page++;render();};
-$('download').onclick=async()=>{try{$('download').disabled=true;const bytes=await exportWorkbook(allocation,qcNames);downloadBytes(bytes,'QC_Allocation_'+new Date().toISOString().slice(0,10)+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');message('Excel download prepared with QC Name validation and the Settings sheet.');}catch(e){message(e.message,true);}finally{$('download').disabled=!allocation.length;}};$('collate').onclick=async()=>{try{$('collate').disabled=true;const bytes=await exportCollated(batches);const total=batches.reduce((n,b)=>n+(b.scannedRows?b.scannedRows.length:0),0);downloadBytes(bytes,'QC_Collated_'+new Date().toISOString().slice(0,10)+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');message(total+' source rows from '+batches.length+' workbook(s) collated into one sheet, with a Status column and the source file, sheet and row for each.');}catch(e){message(e.message,true);}finally{$('collate').disabled=!batches.length;}};
+$('download').onclick=async()=>{try{$('download').disabled=true;const bytes=await exportWorkbook(allocation,qcNames,batches);downloadBytes(bytes,'QC_Allocation_'+new Date().toISOString().slice(0,10)+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');message('Excel download prepared with every source column through QC Comments, QC Name validation and the Settings sheet.');}catch(e){message(e.message,true);}finally{$('download').disabled=!allocation.length;}};$('collate').onclick=async()=>{try{$('collate').disabled=true;const bytes=await exportCollated(batches);const total=batches.reduce((n,b)=>n+(b.scannedRows?b.scannedRows.length:0),0);downloadBytes(bytes,'QC_Collated_'+new Date().toISOString().slice(0,10)+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');message(total+' source rows from '+batches.length+' workbook(s) collated into one sheet, keeping every column from the source files.');}catch(e){message(e.message,true);}finally{$('collate').disabled=!batches.length;}};
 for(const event of ['dragenter','dragover'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('dragging');});for(const event of ['dragleave','drop'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.remove('dragging');});$('drop').addEventListener('drop',e=>importFiles(Array.from(e.dataTransfer.files)));
 try{const saved=JSON.parse(localStorage.getItem('wfs-qc-reviewers-v1')||'[]');if(saved.length)qcNames=validateNames(saved);}catch{}
 try{const saved=localStorage.getItem('wfs-qc-percentage-v1');if(saved!==null)$('qcPercentage').value=String(validatePercentage(saved));}catch{}

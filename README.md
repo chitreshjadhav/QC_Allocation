@@ -18,16 +18,26 @@ are per-browser and never leave the device.
 
 ## Two downloads
 
-- **Download Excel** — the QC allocation: the sampled rows with a QC Name column,
-  reviewer dropdown validation, a frozen header and filters.
-- **Download collated** — every workbook you added, merged into one sheet. This includes
-  rows that were *not* selected for QC and rows that were filtered out entirely, so it
-  doubles as an audit trail of what the tool saw. Columns are the six source fields plus
-  **Review Type**, **Status** (`Eligible`, `Excluded: no Identifier`, or
-  `Excluded: Review Type is not Production`) and the originating **Source File**,
-  **Sheet** and **Row**, so any line can be traced back to the workbook it came from.
+Both keep the columns of your source workbooks rather than a fixed subset.
 
-Collating needs only that workbooks have been added — no allocation required.
+- **Download Excel** — the QC allocation. Every source column in its original order, up
+  to and including **QC Comments**, with the **QC Name** column filled in from the
+  allocation and carrying dropdown validation against your reviewer list. Columns that
+  sit after QC Comments in the source are left out. If a workbook has no QC Name or QC
+  Comments column, they are added at the end.
+- **Download collated** — the added workbooks stacked into one sheet, columns and all.
+  Every scanned row is included, whether or not it was eligible or selected. Nothing is
+  added and nothing is dropped: it is the source files concatenated.
+
+Where workbooks have different columns, the collated sheet is the union of them, matched
+by header name, with blanks where a file does not have a column.
+
+Dates are written as real Excel dates in both, in whichever column they appear — the
+reader recognises a date by its number format, not by position.
+
+Collating needs only that workbooks have been added — no allocation required. The
+on-screen preview still shows the key columns so the table stays readable; the full
+column set is in the downloads.
 
 ## Allocation rules
 
