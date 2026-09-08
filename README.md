@@ -50,9 +50,24 @@ root), Vercel, Cloudflare Pages, Netlify, or an internal web server.
 Note the tool has **no authentication** — anyone who can reach the URL can use it. That
 is fine for the tool itself (it holds no data), but consider where you host it.
 
-## ⚠️ Never commit the offline build
+## Making changes
 
-`QC_Allocation_Tool.html` from the original project hardcodes real production data — the
-07 Sep batch, 150 ticket identifiers and 7 named colleagues. It is in `.gitignore`, and it
-must not be added to this or any other repository. `build-web.js` regenerates the safe
-version from it and fails rather than emitting a file that still contains real records.
+`index.html` is the source of truth — edit it directly. There is no build step and no
+generator; what is in the repo is exactly what is served.
+
+Before committing, a local pre-commit hook verifies the file: that it carries no
+production data, that it still makes no external requests, that every feature is intact,
+and that the inline scripts parse. It fails closed, so a commit is blocked rather than
+waved through if the check cannot run. Bypass deliberately with `git commit --no-verify`.
+
+Push to `main` and GitHub Pages redeploys within a minute or two.
+
+## ⚠️ This repository is public
+
+The tool itself holds no data — workbooks are parsed in the browser and never uploaded —
+but anything committed here is world-readable and permanent in git history.
+
+The earlier offline build of this tool shipped with a real batch of records baked into
+it, so it must never be added to this or any repository. `.gitignore` blocks it by name
+along with every `.xlsx`, `.xlsm`, `.xls` and `.xlsb`, and the pre-commit check refuses
+any commit that reintroduces real records.
