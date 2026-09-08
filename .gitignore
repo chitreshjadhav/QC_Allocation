@@ -1,0 +1,16 @@
+# Never commit the offline build — it embeds ~36 KB of real production data
+# (150 rows, 150 ticket identifiers, 7 named colleagues). A public repo would
+# expose it permanently, including in git history.
+QC_Allocation_Tool.html
+
+# Source workbooks must never be committed either
+*.xlsx
+*.xlsm
+*.xls
+*.xlsb
+
+# Local tooling
+node_modules/
+.vercel
+.DS_Store
+Thumbs.db
