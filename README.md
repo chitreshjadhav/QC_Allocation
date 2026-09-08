@@ -16,6 +16,19 @@ Workbooks are parsed in the browser. Nothing is uploaded, and there is no server
 component. Reviewer names and the chosen percentage are kept in `localStorage`, so they
 are per-browser and never leave the device.
 
+## Two downloads
+
+- **Download Excel** — the QC allocation: the sampled rows with a QC Name column,
+  reviewer dropdown validation, a frozen header and filters.
+- **Download collated** — every workbook you added, merged into one sheet. This includes
+  rows that were *not* selected for QC and rows that were filtered out entirely, so it
+  doubles as an audit trail of what the tool saw. Columns are the six source fields plus
+  **Review Type**, **Status** (`Eligible`, `Excluded: no Identifier`, or
+  `Excluded: Review Type is not Production`) and the originating **Source File**,
+  **Sheet** and **Row**, so any line can be traced back to the workbook it came from.
+
+Collating needs only that workbooks have been added — no allocation required.
+
 ## Allocation rules
 
 - A row is eligible only if it has a non-blank **Identifier** and **Review Type =
