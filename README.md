@@ -29,6 +29,21 @@ file comes through blank for its rows rather than shifting the data. A workbook 
 SERP sheet is reported and skipped rather than failing the batch. The download is named
 `Collated_<date>.xlsx`.
 
+That tab also does its own QC allocation. Set a percentage, generate, and the sampled
+rows download with your columns intact plus five appended at the end:
+
+| Column | Contents |
+|---|---|
+| QC Name | the assigned reviewer, from the random allocation |
+| QC Date | the date the file was created |
+| Pass/Fail | dropdown: Pass or Fail |
+| Criteria | dropdown: Knowledge Gap, Missed to Update or Oversight Error |
+| QC Comment | blank free text |
+
+Sampling reuses the QC Allocation tab exactly: the same rounding up, the same draw
+without replacement, and the same even split across reviewers. Reviewer names come from
+Settings, shared by both tabs. The file is named Content_Review_QC_Allocation_<date>.xlsx.
+
 Blank rows are skipped: these workbooks carry formatted-but-empty rows well past the last
 real record, so a 381-row sheet with 100 filled rows contributes 100.
 
