@@ -20,14 +20,20 @@ th,td{padding:10px;font-size:13px}
 th:nth-child(n),td:nth-child(n){min-width:0}
 .tablewrap{max-height:min(560px,calc(100vh - 190px))}
 }
+
+.tabs{display:flex;gap:6px;margin:0 0 20px;border-bottom:1px solid #dfe4ea;flex-wrap:wrap}
+.tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:11px 16px;font:inherit;font-weight:650;color:#5b6b78;cursor:pointer;border-radius:8px 8px 0 0}
+.tab:hover{color:#163749;background:rgba(22,55,73,.06)}
+.tab[aria-selected="true"]{color:#163749;border-bottom-color:#163749}
+.tab:focus-visible{outline:2px solid #163749;outline-offset:2px}
+@media(max-width:600px){.tab{flex:1 1 auto;padding:11px 10px;text-align:center}}
 </style></head><body>
 <header class="topbar"><div class="brand"><span class="mark" aria-hidden="true">QC</span><div><strong>QC Allocation</strong><div class="small">Production review sampling</div></div></div><button id="settingsToggle" aria-expanded="false" aria-controls="settings">Settings</button></header>
-<main><div class="intro"><div><h1>Allocate your production reviews</h1><p class="small">Combine workbooks, set your QC team, and generate an allocation.</p></div><div class="rule">Samples rows with an Identifier<br>and Review Type equal to Production.</div></div>
-<div id="message" class="status" role="status" aria-live="polite"></div>
+<main><div class="tabs" role="tablist" aria-label="Tools"><button id="tabQc" class="tab" role="tab" aria-selected="true" aria-controls="panelQc">QC Allocation</button><button id="tabProd" class="tab" role="tab" aria-selected="false" aria-controls="panelProd" tabindex="-1">Production Collation</button></div><div id="message" class="status" role="status" aria-live="polite"></div><div id="panelQc" role="tabpanel" aria-labelledby="tabQc"><div class="intro"><div><h1>Allocate your production reviews</h1><p class="small">Combine workbooks, set your QC team, and generate an allocation.</p></div><div class="rule">Samples rows with an Identifier<br>and Review Type equal to Production.</div></div>
 <section id="settings" class="panel settings" hidden><div class="panel-head"><h2>QC name settings</h2><button id="closeSettings" class="quiet">Close</button></div><div class="panel-body"><div><label for="names">Allowed QC names · one per line</label><textarea id="names" placeholder="Enter the people who will do QC"></textarea><div class="actions"><button class="primary" id="saveSettings">Save QC names</button></div></div><div><h2>Your reviewer validation list</h2><p class="small">Random allocation uses only these names. You can also change an assigned reviewer using the dropdown beside each row.</p><p class="small">The Excel download includes a Settings sheet and QC Name dropdowns with validation. Update your names here before generating a new allocation.</p><p class="small">Names are saved in this browser when browser storage is available. Changing the name list clears the current allocation.</p></div></div></section>
 <div class="grid"><aside class="panel"><div class="panel-head"><div><div class="step">01 / SOURCE FILES</div><h2>Your workbooks</h2></div></div><div class="panel-body"><div id="drop" class="drop"><strong>Add Excel workbooks</strong><button id="choose">Choose files</button><input id="files" type="file" multiple accept=".xlsx,.xlsm" aria-label="Choose Excel workbooks"><p class="small">or drag and drop here<br>.xlsx and .xlsm · up to 25 MB each</p></div><div class="filelist" id="filelist"></div><button id="clear" class="quiet" style="width:100%;margin-top:12px">Clear batch</button><p class="hint">Add all workbooks for the day. Clear the batch before starting another day.</p></div></aside>
 <section class="panel"><div class="metrics"><div class="metric"><strong id="fileCount">0</strong><span>Workbooks</span></div><div class="metric"><strong id="rowCount">0</strong><span>Eligible rows</span></div><div class="metric"><strong id="reviewerCount">0</strong><span>QC reviewers</span></div></div><div class="toolbar"><div><div class="step">02 / QC ALLOCATION</div><h2 id="resultTitle">Ready for allocation</h2></div><div class="actions"><button id="allocate" class="primary">Generate allocation</button><button id="download" disabled>Download Excel</button><button id="collate" disabled>Download collated</button></div></div><div class="sampling"><div><label for="qcPercentage">QC percentage (%)</label><input id="qcPercentage" type="number" min="0.01" max="100" step="0.01" value="100" aria-describedby="samplePreview roundingNote"></div><div><p id="samplePreview" class="small" role="status" aria-live="polite"></p><p id="roundingNote" class="small">Calculated across the combined eligible production, rounded up to a whole row. Each row can be selected once.</p></div></div><div class="allocation-summary" id="allocationSummary"></div><div id="result"></div><div id="pager" class="pager" hidden><span class="small" id="pageInfo"></span><div class="actions"><button id="prev">Previous</button><button id="next">Next</button></div></div></section></div>
-<footer>Files are processed on your device. Macros are never run. Allocation randomly samples your chosen percentage of eligible production across all files, including repeated identifiers, and splits the selected workload as evenly as possible. Shuffle again draws a new sample. The percentage is saved in this browser when storage is available. Review Type matching ignores surrounding spaces and letter case. Older .xls and .xlsb files must be saved as .xlsx first. Formula cells use their last saved results.</footer></main>
+<footer>Files are processed on your device. Macros are never run. Allocation randomly samples your chosen percentage of eligible production across all files, including repeated identifiers, and splits the selected workload as evenly as possible. Shuffle again draws a new sample. The percentage is saved in this browser when storage is available. Review Type matching ignores surrounding spaces and letter case. Older .xls and .xlsb files must be saved as .xlsx first. Formula cells use their last saved results.</footer></div><div id="panelProd" role="tabpanel" aria-labelledby="tabProd" hidden><div class="intro"><div><h1>Collate production files</h1><p class="small">Combine the SERP sheet from any number of AI Content Review workbooks into one file.</p></div><div class="rule">Reads the SERP tab only.<br>Every column is kept.</div></div><div class="grid"><aside class="panel"><div class="panel-head"><div><div class="step">01 / PRODUCTION FILES</div><h2>Your workbooks</h2></div></div><div class="panel-body"><div id="prodDrop" class="drop"><strong>Add Excel workbooks</strong><button id="prodChoose">Choose files</button><input id="prodFiles" type="file" multiple accept=".xlsx,.xlsm" aria-label="Choose production workbooks"><p class="small">or drag and drop here<br>.xlsx and .xlsm · up to 25 MB each</p></div><div class="filelist" id="prodFilelist"></div><button id="prodClear" class="quiet" style="width:100%;margin-top:12px" disabled>Clear files</button><p class="hint">Each workbook must have a sheet named SERP. Other sheets are ignored.</p></div></aside><section class="panel"><div class="metrics"><div class="metric"><strong id="prodFileCount">0</strong><span>Workbooks</span></div><div class="metric"><strong id="prodRowCount">0</strong><span>SERP rows</span></div><div class="metric"><strong id="prodColCount">0</strong><span>Columns</span></div></div><div class="toolbar"><div><div class="step">02 / COLLATED OUTPUT</div><h2 id="prodTitle">Combined SERP data</h2></div><div class="actions"><button id="prodCollate" class="primary" disabled>Download Collated</button></div></div><div id="prodPreviewNote" class="sampling"><div><p class="small" id="prodSummary">Add workbooks to see their combined SERP data.</p></div></div><div id="prodResult"></div></section></div><footer>Files are processed on your device. Macros are never run. Only the sheet named SERP is read from each workbook; Summary, Description and Validation sheets are ignored. Columns are matched across workbooks by header name, so a column missing from one file comes through blank for its rows rather than shifting the data. Header formatting, dates and durations are preserved. Older .xls and .xlsb files must be saved as .xlsx first. Formula cells use their last saved results.</footer></div></main>
 <script>/*!
 
 JSZip v3.10.1 - A JavaScript class for generating and reading zip files
@@ -316,4 +322,205 @@ for(const event of ['dragenter','dragover'])$('drop').addEventListener(event,e=>
 try{const saved=JSON.parse(localStorage.getItem('wfs-qc-reviewers-v1')||'[]');if(saved.length)qcNames=validateNames(saved);}catch{}
 try{const saved=localStorage.getItem('wfs-qc-percentage-v1');if(saved!==null)$('qcPercentage').value=String(validatePercentage(saved));}catch{}
 render();message((qcNames.length?'Add your Excel workbooks, choose the QC percentage, and generate an allocation.':'Open Settings to add your QC reviewers, then add your Excel workbooks.'));registerTools();
+</script><script>
+(function(){
+const $p=id=>document.getElementById(id);
+const SHEET='SERP';
+
+// ---- tabs -------------------------------------------------------------------
+const tabs=[['tabQc','panelQc'],['tabProd','panelProd']];
+function showTab(which){
+ for(const [t,p] of tabs){
+  const on=(t==='tabQc')===(which==='qc');
+  $p(p).hidden=!on;$p(t).setAttribute('aria-selected',String(on));$p(t).tabIndex=on?0:-1;
+ }
+ const m=$p('message');if(m){m.textContent='';m.className='status';}
+ // Settings configures QC reviewer names only, so it has no meaning on the other tab.
+ const cog=$p('settingsToggle');if(cog)cog.hidden=which!=='qc';
+ const drawer=$p('settings');if(drawer&&which!=='qc'){drawer.hidden=true;if(cog)cog.setAttribute('aria-expanded','false');}
+ try{localStorage.setItem('wfs-tab-v1',which);}catch(e){}
+}
+$p('tabQc').addEventListener('click',()=>showTab('qc'));
+$p('tabProd').addEventListener('click',()=>showTab('prod'));
+for(const [t] of tabs)$p(t).addEventListener('keydown',e=>{
+ if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight')return;
+ e.preventDefault();const next=e.key==='ArrowRight'?'prod':'qc';showTab(next);
+ $p(next==='qc'?'tabQc':'tabProd').focus();
+});
+try{if(localStorage.getItem('wfs-tab-v1')==='prod')showTab('prod');}catch(e){}
+
+// ---- read only the SERP sheet ----------------------------------------------
+async function readSerpSheet(data,filename){
+ if(!/\.(xlsx|xlsm)$/i.test(filename))throw Error('Use .xlsx or .xlsm. Save older .xls or .xlsb files as .xlsx in Excel first.');
+ let zip;try{zip=await JSZip.loadAsync(data);}catch(e){throw Error('Cannot open this workbook. Check that it is a valid, unencrypted .xlsx or .xlsm file.');}
+ const read=async p=>{if(!zip.file(p))throw Error('Missing workbook part: '+p);return parseXML(await zip.file(p).async('string'));};
+ const wb=await read('xl/workbook.xml'), rel=await read('xl/_rels/workbook.xml.rels');
+ const epoch1904=['1','true'].includes(tags(wb,'workbookPr')[0]&&tags(wb,'workbookPr')[0].getAttribute('date1904'));
+ const shared=zip.file('xl/sharedStrings.xml')?tags(await read('xl/sharedStrings.xml'),'si').map(si=>tags(si,'t').map(t=>t.textContent).join('')):[];
+ const formats={};let styles=[],styleXfs=[],fontXML=[],fillXML=[],borderXML=[];
+ if(zip.file('xl/styles.xml')){const st=await read('xl/styles.xml');
+  for(const f of tags(st,'numFmt'))formats[f.getAttribute('numFmtId')]=f.getAttribute('formatCode');
+  const ser=el=>{try{return new XMLSerializer().serializeToString(el);}catch(e){return '';}};
+  fontXML=tags(tags(st,'fonts')[0]||st,'font').map(ser);fillXML=tags(tags(st,'fills')[0]||st,'fill').map(ser);borderXML=tags(tags(st,'borders')[0]||st,'border').map(ser);
+  const xfs=tags(tags(st,'cellXfs')[0]||st,'xf');
+  styles=xfs.map(f=>({id:Number(f.getAttribute('numFmtId')||0),code:formats[f.getAttribute('numFmtId')]||''}));
+  styleXfs=xfs.map(f=>({font:Number(f.getAttribute('fontId')||0),fill:Number(f.getAttribute('fillId')||0),border:Number(f.getAttribute('borderId')||0),align:tags(f,'alignment')[0]?ser(tags(f,'alignment')[0]):''}));}
+ const relations=Object.fromEntries(tags(rel,'Relationship').filter(r=>r.getAttribute('TargetMode')!=='External').map(r=>[r.getAttribute('Id'),r.getAttribute('Target')]));
+ const sheet=tags(wb,'sheet').find(s=>norm(s.getAttribute('name'))===norm(SHEET));
+ if(!sheet)throw Error('No sheet named '+SHEET+' in this workbook.');
+ const target=relations[sheet.getAttribute('r:id')];
+ if(!target)throw Error('The '+SHEET+' sheet could not be located in this workbook.');
+ const parts=(target.charAt(0)==='/'?target.slice(1):'xl/'+target).split('/'),clean=[];
+ for(const p of parts){if(p==='..')clean.pop();else if(p!=='.')clean.push(p);}
+ const sheetDoc=await read(clean.join('/'));
+ const sheetRows=tags(sheetDoc,'row');
+ const decode=c=>{const type=c.getAttribute('t'),value=txt(c,'v'),formula=tags(c,'f').length>0;
+  let v=type==='s'?(shared[Number(value)]||''):type==='inlineStr'?tags(c,'t').map(x=>x.textContent).join(''):value;
+  const style=styles[Number(c.getAttribute('s')||0)]||{id:0,code:''};const format=style.code||'';
+  if((!type||type==='n')&&/^0+$/.test(format)&&/^\d+$/.test(v))v=v.padStart(format.length,'0');
+  return {v,type,formula,fmt:style,uncached:formula&&!tags(c,'v').length};};
+ let headerAt=-1,columns=null;
+ for(let i=0;i<Math.min(sheetRows.length,50);i++){
+  const named=tags(sheetRows[i],'c').map(c=>({col:columnNumber(c.getAttribute('r')),name:String(decode(c).v).trim(),s:Number(c.getAttribute('s')||0)})).filter(x=>x.name);
+  if(named.length>=2){headerAt=i;columns=named.sort((a,b)=>a.col-b.col);break;}
+ }
+ if(!columns)throw Error('The '+SHEET+' sheet has no header row.');
+ const seenName=new Set();columns=columns.filter(x=>{const k=norm(x.name);if(seenName.has(k))return false;seenName.add(k);return true;});
+ const headerStyles={};
+ for(const x of columns){const xf=styleXfs[x.s];if(!xf)continue;
+  headerStyles[x.name]={font:fontXML[xf.font]||'',fill:fillXML[xf.fill]||'',border:borderXML[xf.border]||'',align:xf.align||''};}
+ const headerHeight=Number(sheetRows[headerAt].getAttribute('ht'))||0;
+ const rows=[];
+ for(const row of sheetRows.slice(headerAt+1)){
+  const cells=new Map(tags(row,'c').map(c=>[columnNumber(c.getAttribute('r')),decode(c)]));
+  const full={};let any=false;
+  for(const x of columns){const t=cellText(cells.get(x.col),epoch1904);full[x.name]=t;if(String(t).trim())any=true;}
+  if(!any)continue;
+  rows.push({full:full,source:filename,row:Number(row.getAttribute('r'))});
+ }
+ return {name:filename,columns:columns.map(x=>x.name),rows:rows,headerStyles:headerStyles,headerHeight:headerHeight};
+}
+
+// ---- export -----------------------------------------------------------------
+async function exportSerpCollated(list){
+ if(!list.length)throw Error('Add at least one production workbook first.');
+ const rows=list.reduce((a,b)=>a.concat(b.rows),[]);
+ if(!rows.length)throw Error('No '+SHEET+' rows were found in these workbooks.');
+ const head=[];for(const b of list)for(const n of b.columns)if(!head.some(h=>norm(h)===norm(n)))head.push(n);
+ const ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+ const styleFor=n=>{for(const b of list){const hs=b.headerStyles||{};const k=Object.keys(hs).find(h=>norm(h)===norm(n));if(k)return hs[k];}return null;};
+ const fonts=['<font><sz val="11"/><name val="Calibri"/></font>','<font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font>'];
+ const fills=['<fill><patternFill patternType="none"/></fill>','<fill><patternFill patternType="gray125"/></fill>','<fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill>'];
+ const borders=['<border/>'];
+ const xfs=['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>','<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/>','<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>','<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>','<xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'];
+ const put=(arr,xml,fb)=>{if(!xml)return fb;const i=arr.indexOf(xml);if(i!==-1)return i;arr.push(xml);return arr.length-1;};
+ const seen=new Map();let lastStyle=1;
+ const headerIdx=head.map(n=>{
+  const s=styleFor(n);
+  if(!s||(!s.font&&!s.fill&&!s.border&&!s.align))return lastStyle;
+  const key=s.font+'|'+s.fill+'|'+s.border+'|'+s.align;
+  if(seen.has(key)){lastStyle=seen.get(key);return lastStyle;}
+  xfs.push('<xf numFmtId="0" fontId="'+put(fonts,s.font,0)+'" fillId="'+put(fills,s.fill,0)+'" borderId="'+put(borders,s.border,0)+'" xfId="0" applyFont="1" applyFill="1" applyBorder="1"'+(s.align?' applyAlignment="1">'+s.align+'</xf>':'/>'));
+  lastStyle=xfs.length-1;seen.set(key,lastStyle);return lastStyle;});
+ const hh=list.map(b=>b.headerHeight).find(h=>h>0)||28;
+ const strCell=(v,ref,s)=>'<c r="'+ref+'" t="inlineStr" s="'+(s||0)+'"><is><t xml:space="preserve">'+xmlEsc(v)+'</t></is></c>';
+ const rowXML=(arr,r,header)=>'<row r="'+r+'" ht="'+(header?hh:22)+'" customHeight="1">'+arr.map((v,c)=>{
+  if(!header){const num=excelNumber(v);if(num)return '<c r="'+columnName(c)+r+'" s="'+num.style+'"><v>'+num.value+'</v></c>';}
+  return strCell(v,columnName(c)+r,header?(headerIdx[c]!=null?headerIdx[c]:1):0);
+ }).join('')+'</row>';
+ const pick=(x,n)=>{const f=x.full||{};if(Object.prototype.hasOwnProperty.call(f,n))return f[n];
+  const k=Object.keys(f).find(h=>norm(h)===norm(n));return k===undefined?'':f[k];};
+ const body=rowXML(head,1,true)+rows.map((x,i)=>rowXML(head.map(n=>pick(x,n)),i+2)).join('');
+ const widths=head.map(n=>Math.min(46,Math.max(12,String(n).length+4)));
+ const zip=new JSZip();
+ zip.file('xl/worksheets/sheet1.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="'+ns+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>'+widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols><sheetData>'+body+'</sheetData><autoFilter ref="A1:'+columnName(head.length-1)+(rows.length+1)+'"/></worksheet>');
+ zip.file('xl/workbook.xml','<?xml version="1.0"?><workbook xmlns="'+ns+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="'+SHEET+'" sheetId="1" r:id="rId1"/></sheets></workbook>');
+ zip.file('xl/styles.xml','<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/><numFmt numFmtId="165" formatCode="mm-dd-yyyy hh:mm:ss"/><numFmt numFmtId="166" formatCode="[hh]:mm:ss"/></numFmts><fonts count="'+fonts.length+'">'+fonts.join('')+'</fonts><fills count="'+fills.length+'">'+fills.join('')+'</fills><borders count="'+borders.length+'">'+borders.join('')+'</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="'+xfs.length+'">'+xfs.join('')+'</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>');
+ const rels=a=>'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+a.map(x=>'<Relationship Id="'+x[0]+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'+x[1]+'" Target="'+x[2]+'"/>').join('')+'</Relationships>';
+ zip.file('_rels/.rels',rels([['rId1','officeDocument','xl/workbook.xml']]));
+ zip.file('xl/_rels/workbook.xml.rels',rels([['rId1','worksheet','worksheets/sheet1.xml'],['rId2','styles','styles.xml']]));
+ zip.file('[Content_Types].xml','<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+ return zip.generateAsync({type:'uint8array',compression:'DEFLATE'});
+}
+
+// ---- state and UI -----------------------------------------------------------
+let prodBatches=[],prodBusy=false;
+const prodColumns=()=>{const c=[];for(const b of prodBatches)for(const n of b.columns)if(!c.some(h=>norm(h)===norm(n)))c.push(n);return c;};
+const prodRowTotal=()=>prodBatches.reduce((n,b)=>n+b.rows.length,0);
+const PREVIEW=50;
+function renderProd(){
+ const cols=prodColumns(),total=prodRowTotal();
+ $p('prodFileCount').textContent=String(prodBatches.length);
+ $p('prodRowCount').textContent=total.toLocaleString();
+ $p('prodColCount').textContent=String(cols.length);
+ $p('prodCollate').disabled=!total||prodBusy;
+ $p('prodClear').disabled=!prodBatches.length||prodBusy;
+ const list=$p('prodFilelist');list.replaceChildren();
+ prodBatches.forEach((b,i)=>{
+  const box=document.createElement('div');box.className='file';
+  box.innerHTML='<div class="file-main"><div class="file-title"></div><span class="tag"></span></div><button aria-label="Remove workbook">×</button>';
+  box.querySelector('.file-title').textContent=b.name;
+  box.querySelector('.tag').textContent=b.rows.length.toLocaleString()+' SERP rows / '+b.columns.length+' columns';
+  box.querySelector('button').addEventListener('click',()=>{if(prodBusy)return;prodBatches.splice(i,1);renderProd();message(prodBatches.length?'Workbook removed.':'All workbooks removed.');});
+  list.append(box);
+ });
+ const out=$p('prodResult');out.replaceChildren();
+ if(!total){$p('prodSummary').textContent='Add workbooks to see their combined SERP data.';return;}
+ $p('prodSummary').textContent=total.toLocaleString()+' SERP rows from '+prodBatches.length+' workbook(s), '+cols.length+' columns. Showing the first '+Math.min(PREVIEW,total)+'.';
+ const wrap=document.createElement('div');wrap.className='tablewrap';
+ const table=document.createElement('table');
+ const thead=document.createElement('thead');const hr=document.createElement('tr');
+ for(const n of cols){const th=document.createElement('th');th.textContent=n;hr.append(th);}
+ thead.append(hr);table.append(thead);
+ const tbody=document.createElement('tbody');
+ const flat=[];for(const b of prodBatches){for(const r of b.rows){flat.push(r);if(flat.length>=PREVIEW)break;}if(flat.length>=PREVIEW)break;}
+ for(const r of flat){const tr=document.createElement('tr');
+  for(const n of cols){const td=document.createElement('td');
+   const f=r.full||{};const k=Object.prototype.hasOwnProperty.call(f,n)?n:Object.keys(f).find(h=>norm(h)===norm(n));
+   td.textContent=k===undefined?'':f[k];tr.append(td);}
+  tbody.append(tr);}
+ table.append(tbody);wrap.append(table);out.append(wrap);
+}
+async function importProdFiles(files){
+ if(prodBusy)return;prodBusy=true;renderProd();
+ let added=0,duplicates=0;const errors=[];
+ for(const f of files){
+  message('Reading '+f.name+'…');
+  try{
+   if(f.size>25*1024*1024)throw Error('File exceeds the 25 MB limit.');
+   const bytes=await f.arrayBuffer();
+   const hash=crypto.subtle?Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(b=>b.toString(16).padStart(2,'0')).join(''):f.name+':'+f.size;
+   if(prodBatches.some(b=>b.hash===hash)){duplicates++;continue;}
+   const batch=await readSerpSheet(bytes,f.name);
+   batch.hash=hash;prodBatches.push(batch);added++;
+  }catch(e){errors.push(f.name+': '+e.message);}
+ }
+ prodBusy=false;renderProd();
+ const bits=[];
+ if(added)bits.push(added+' workbook(s) added.');
+ if(duplicates)bits.push(duplicates+' duplicate file(s) skipped.');
+ if(errors.length)bits.push(errors.length+' file(s) could not be read.');
+ message(bits.join(' ')||'No workbooks were added.',errors.length?'warn':'');
+ if(errors.length)for(const e of errors)console.warn(e);
+}
+$p('prodChoose').addEventListener('click',()=>$p('prodFiles').click());
+$p('prodFiles').addEventListener('change',async e=>{const f=Array.from(e.target.files||[]);e.target.value='';if(f.length)await importProdFiles(f);});
+$p('prodClear').addEventListener('click',()=>{if(prodBusy)return;prodBatches=[];renderProd();message('Production files cleared.');});
+const drop=$p('prodDrop');
+for(const ev of ['dragenter','dragover'])drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');});
+for(const ev of ['dragleave','drop'])drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');});
+drop.addEventListener('drop',async e=>{const f=Array.from((e.dataTransfer&&e.dataTransfer.files)||[]);if(f.length)await importProdFiles(f);});
+$p('prodCollate').addEventListener('click',async()=>{
+ if(prodBusy)return;prodBusy=true;renderProd();
+ try{
+  const bytes=await exportSerpCollated(prodBatches);
+  downloadBytes(bytes,'Collated_'+new Date().toISOString().slice(0,10)+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  message(prodRowTotal().toLocaleString()+' SERP rows from '+prodBatches.length+' workbook(s) collated into one sheet, keeping every column.');
+ }catch(e){message(e.message,'warn');}
+ finally{prodBusy=false;renderProd();}
+});
+renderProd();
+window.__prod={readSerpSheet:readSerpSheet,exportSerpCollated:exportSerpCollated,importProdFiles:importProdFiles,showTab:showTab,
+ get batches(){return prodBatches;},clear(){prodBatches=[];renderProd();}};
+})();
 </script></body></html>

@@ -16,6 +16,22 @@ Workbooks are parsed in the browser. Nothing is uploaded, and there is no server
 component. Reviewer names and the chosen percentage are kept in `localStorage`, so they
 are per-browser and never leave the device.
 
+## Two tabs
+
+**QC Allocation** samples production reviews and splits them across a QC team. Everything
+below about eligibility, sampling and the two downloads applies to this tab.
+
+**Production Collation** is separate and much simpler: add any number of AI Content
+Review workbooks and it stacks their **SERP** sheet into one file. Only the sheet named
+SERP is read — Summary, Description and Validation are ignored — and every column is
+kept. Columns are matched across workbooks by header name, so a column missing from one
+file comes through blank for its rows rather than shifting the data. A workbook with no
+SERP sheet is reported and skipped rather than failing the batch. The download is named
+`Collated_<date>.xlsx`.
+
+Blank rows are skipped: these workbooks carry formatted-but-empty rows well past the last
+real record, so a 381-row sheet with 100 filled rows contributes 100.
+
 ## Two downloads
 
 Both keep the columns of your source workbooks rather than a fixed subset.
