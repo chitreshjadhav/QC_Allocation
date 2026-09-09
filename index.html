@@ -141,10 +141,15 @@ async function readWorkbook(data,filename) {
  const wb=await read('xl/workbook.xml'), rel=await read('xl/_rels/workbook.xml.rels');
  const epoch1904=['1','true'].includes(tags(wb,'workbookPr')[0]?.getAttribute('date1904'));
  const shared=zip.file('xl/sharedStrings.xml')?tags(await read('xl/sharedStrings.xml'),'si').map(si=>tags(si,'t').map(t=>t.textContent).join('')):[];
- const formats={};let styles=[];
- if(zip.file('xl/styles.xml')){const st=await read('xl/styles.xml');for(const f of tags(st,'numFmt'))formats[f.getAttribute('numFmtId')]=f.getAttribute('formatCode');styles=tags(tags(st,'cellXfs')[0]??st,'xf').map(f=>({id:Number(f.getAttribute('numFmtId')||0),code:formats[f.getAttribute('numFmtId')]??''}));}
+ const formats={};let styles=[],styleXfs=[],fontXML=[],fillXML=[],borderXML=[];
+ if(zip.file('xl/styles.xml')){const st=await read('xl/styles.xml');for(const f of tags(st,'numFmt'))formats[f.getAttribute('numFmtId')]=f.getAttribute('formatCode');
+  const ser=el=>{try{return new XMLSerializer().serializeToString(el);}catch(e){return '';}};
+  fontXML=tags(tags(st,'fonts')[0]??st,'font').map(ser);fillXML=tags(tags(st,'fills')[0]??st,'fill').map(ser);borderXML=tags(tags(st,'borders')[0]??st,'border').map(ser);
+  const xfs=tags(tags(st,'cellXfs')[0]??st,'xf');
+  styles=xfs.map(f=>({id:Number(f.getAttribute('numFmtId')||0),code:formats[f.getAttribute('numFmtId')]??''}));
+  styleXfs=xfs.map(f=>({font:Number(f.getAttribute('fontId')||0),fill:Number(f.getAttribute('fillId')||0),border:Number(f.getAttribute('borderId')||0),align:tags(f,'alignment')[0]?ser(tags(f,'alignment')[0]):''}));}
  const relations=Object.fromEntries(tags(rel,'Relationship').filter(r=>r.getAttribute('TargetMode')!=='External').map(r=>[r.getAttribute('Id'),r.getAttribute('Target')]));
- const rows=[],sheets=[],scannedRows=[],columnOrder=[]; let scanned=0,excluded=0,matched=0;
+ const rows=[],sheets=[],scannedRows=[],columnOrder=[],headerStyles={}; let scanned=0,excluded=0,matched=0,headerHeight=0;
  for(const sheet of tags(wb,'sheet')) {
   const target=relations[sheet.getAttribute('r:id')]; if(!target)continue;
   const parts=(target.startsWith('/')?target.slice(1):'xl/'+target).split('/'),clean=[];for(const p of parts){if(p==='..')clean.pop();else if(p!=='.')clean.push(p);}
@@ -153,7 +158,9 @@ async function readWorkbook(data,filename) {
    const style=styles[Number(c.getAttribute('s')||0)]||{id:0,code:''};const format=style.code||'';if((!type||type==="n")&&/^0+$/.test(format)&&/^\d+$/.test(v))v=v.padStart(format.length,'0');return {v,type,formula,fmt:style,uncached:formula&&!tags(c,'v').length};};
   for(let i=0;i<Math.min(sheetRows.length,100);i++){const cells=tags(sheetRows[i],'c'); const byHeader=new Map();for(const c of cells){const key=norm(decode(c).v);if(key)byHeader.set(key,[...(byHeader.get(key)||[]),columnNumber(c.getAttribute('r'))]);}
    if([...HEADERS,'Review Type'].every(h=>byHeader.has(norm(h)))){if([...HEADERS,'Review Type'].some(h=>byHeader.get(norm(h)).length!==1))throw Error('Duplicate required column in '+sheet.getAttribute('name')+'.');mapping=[...HEADERS,'Review Type'].map(h=>byHeader.get(norm(h))[0]);headerAt=i;
-    columns=cells.map(c=>({col:columnNumber(c.getAttribute('r')),name:String(decode(c).v).trim()})).filter(x=>x.name).sort((a,b)=>a.col-b.col);
+    columns=cells.map(c=>({col:columnNumber(c.getAttribute('r')),name:String(decode(c).v).trim(),s:Number(c.getAttribute('s')||0)})).filter(x=>x.name).sort((a,b)=>a.col-b.col);
+    if(!headerHeight){const ht=Number(sheetRows[i].getAttribute('ht'));if(ht>0)headerHeight=ht;}
+    for(const x of columns){const xf=styleXfs[x.s];if(!xf)continue;if(Object.keys(headerStyles).some(h=>norm(h)===norm(x.name)))continue;headerStyles[x.name]={font:fontXML[xf.font]||'',fill:fillXML[xf.fill]||'',border:borderXML[xf.border]||'',align:xf.align||''};}
     for(const x of columns)if(!columnOrder.some(n=>norm(n)===norm(x.name)))columnOrder.push(x.name);
     break;}}
   if(!mapping){sheets.push({name:sheet.getAttribute('name'),status:'Skipped: required headers not found',eligible:0});continue;}
@@ -174,7 +181,7 @@ async function readWorkbook(data,filename) {
   sheets.push({name:sheet.getAttribute('name'),status:'Imported',eligible:count});
  }
  if(!matched)throw Error('No sheet contains all seven required source headers: '+[...HEADERS,'Review Type'].join(', ')+'.');
- return {name:filename,rows,scannedRows,columns:columnOrder,scanned,excluded,sheets};
+ return {name:filename,rows,scannedRows,columns:columnOrder,headerStyles,headerHeight,scanned,excluded,sheets};
 }
 async function exportWorkbook(rows,names,batches){
  names=validateNames(names);if(!rows.length)throw Error('Generate an allocation first.');if(rows.some(r=>!names.includes(r.qc)))throw Error('Every allocation must use a QC name from Settings.');
@@ -189,21 +196,39 @@ async function exportWorkbook(rows,names,batches){
 
  const zip=new JSZip(), ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
  const strCell=(value,ref,style=0)=>'<c r="'+ref+'" t="inlineStr" s="'+style+'"><is><t xml:space="preserve">'+xmlEsc(value)+'</t></is></c>';
- const rowXML=(arr,r,header=false)=>'<row r="'+r+'" ht="'+(header?28:22)+'" customHeight="1">'+arr.map((v,c)=>{
+ const rowXML=(arr,r,header=false,forceStyle=null)=>'<row r="'+r+'" ht="'+(header?(sourceHeaderHeight||28):22)+'" customHeight="1">'+arr.map((v,c)=>{
   if(!header){const num=excelNumber(v);if(num)return '<c r="'+columnName(c)+r+'" s="'+num.style+'"><v>'+num.value+'</v></c>';}
-  return strCell(v,columnName(c)+r,header?1:0);
+  return strCell(v,columnName(c)+r,header?(forceStyle!=null?forceStyle:(built.idx[c]!=null?built.idx[c]:1)):0);
  }).join('')+'</row>';
  const pick=(x,n)=>{const f=x.full||{};if(Object.prototype.hasOwnProperty.call(f,n))return f[n];const k=Object.keys(f).find(h=>norm(h)===norm(n));return k===undefined?'':f[k];};
  const widthsFor=hs=>hs.map(n=>/time|date/i.test(String(n))?22:Math.min(46,Math.max(12,String(n).length+4)));
- const STYLES='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/><numFmt numFmtId="165" formatCode="mm-dd-yyyy hh:mm:ss"/><numFmt numFmtId="166" formatCode="[hh]:mm:ss"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+ const headerStyleFor=n=>{for(const b of (batches||[])){const hs=b.headerStyles||{};const k=Object.keys(hs).find(h=>norm(h)===norm(n));if(k)return hs[k];}return null;};
+ const sourceHeaderHeight=(batches||[]).map(b=>b.headerHeight).find(h=>h>0)||0;
+ const buildStyles=heads=>{
+  const fonts=['<font><sz val="11"/><name val="Calibri"/></font>','<font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font>'];
+  const fills=['<fill><patternFill patternType="none"/></fill>','<fill><patternFill patternType="gray125"/></fill>','<fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill>'];
+  const borders=['<border/>'];
+  const xfs=['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>','<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/>','<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>','<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>','<xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'];
+  const put=(arr,xml,fb)=>{if(!xml)return fb;const i=arr.indexOf(xml);if(i!==-1)return i;arr.push(xml);return arr.length-1;};
+  const seen=new Map();let last=1;
+  const idx=heads.map(n=>{
+   const s=headerStyleFor(n);
+   if(!s||(!s.font&&!s.fill&&!s.border&&!s.align))return last;
+   const key=s.font+'|'+s.fill+'|'+s.border+'|'+s.align;
+   if(seen.has(key)){last=seen.get(key);return last;}
+   xfs.push('<xf numFmtId="0" fontId="'+put(fonts,s.font,0)+'" fillId="'+put(fills,s.fill,0)+'" borderId="'+put(borders,s.border,0)+'" xfId="0" applyFont="1" applyFill="1" applyBorder="1"'+(s.align?' applyAlignment="1">'+s.align+'</xf>':'/>'));
+   last=xfs.length-1;seen.set(key,last);return last;});
+  const xml='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/><numFmt numFmtId="165" formatCode="mm-dd-yyyy hh:mm:ss"/><numFmt numFmtId="166" formatCode="[hh]:mm:ss"/></numFmts><fonts count="'+fonts.length+'">'+fonts.join('')+'</fonts><fills count="'+fills.length+'">'+fills.join('')+'</fills><borders count="'+borders.length+'">'+borders.join('')+'</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="'+xfs.length+'">'+xfs.join('')+'</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  return {xml,idx};};
+ const built=buildStyles(head);
  const rels=a=>'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+a.map(([id,type,target])=>'<Relationship Id="'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'+type+'" Target="'+target+'"/>').join('')+'</Relationships>';
  const sheetXML=(body,widths,extra='')=>'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="'+ns+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>'+widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols><sheetData>'+body+'</sheetData>'+extra+'</worksheet>';
  const contentTypes=n=>'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+Array.from({length:n},(_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>';
  const body=rowXML(head,1,true)+rows.map((r,i)=>rowXML(head.map((n,ci)=>ci===qcCol?r.qc:pick(r,n)),i+2)).join('');
  zip.file('xl/worksheets/sheet1.xml',sheetXML(body,widthsFor(head),'<autoFilter ref="A1:'+lastLetter+lastRow+'"/><dataValidations count="1"><dataValidation type="list" allowBlank="0" showDropDown="0" showErrorMessage="1" errorStyle="stop" errorTitle="Choose a QC name" error="Select a reviewer from the Settings list." sqref="'+qcLetter+'2:'+qcLetter+lastRow+'"><formula1>QCNames</formula1></dataValidation></dataValidations>'));
- zip.file('xl/worksheets/sheet2.xml',sheetXML(rowXML(['QC Name'],1,true)+names.map((n,i)=>'<row r="'+(i+2)+'">'+strCell(n,'A'+(i+2))+'</row>').join(''),[30]));
+ zip.file('xl/worksheets/sheet2.xml',sheetXML(rowXML(['QC Name'],1,true,1)+names.map((n,i)=>'<row r="'+(i+2)+'">'+strCell(n,'A'+(i+2))+'</row>').join(''),[30]));
  zip.file('xl/workbook.xml','<?xml version="1.0"?><workbook xmlns="'+ns+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="QC Allocation" sheetId="1" r:id="rId1"/><sheet name="Settings" sheetId="2" r:id="rId2"/></sheets><definedNames><definedName name="QCNames">\'Settings\'!$A$2:$A$'+(names.length+1)+'</definedName></definedNames></workbook>');
- zip.file('xl/styles.xml',STYLES);
+ zip.file('xl/styles.xml',built.xml);
  zip.file('_rels/.rels',rels([['rId1','officeDocument','xl/workbook.xml']]));
  zip.file('xl/_rels/workbook.xml.rels',rels([['rId1','worksheet','worksheets/sheet1.xml'],['rId2','worksheet','worksheets/sheet2.xml'],['rId3','styles','styles.xml']]));
  zip.file('[Content_Types].xml',contentTypes(2));
@@ -220,20 +245,38 @@ async function exportCollated(batches){
 
  const zip=new JSZip(), ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
  const strCell=(value,ref,style=0)=>'<c r="'+ref+'" t="inlineStr" s="'+style+'"><is><t xml:space="preserve">'+xmlEsc(value)+'</t></is></c>';
- const rowXML=(arr,r,header=false)=>'<row r="'+r+'" ht="'+(header?28:22)+'" customHeight="1">'+arr.map((v,c)=>{
+ const rowXML=(arr,r,header=false,forceStyle=null)=>'<row r="'+r+'" ht="'+(header?(sourceHeaderHeight||28):22)+'" customHeight="1">'+arr.map((v,c)=>{
   if(!header){const num=excelNumber(v);if(num)return '<c r="'+columnName(c)+r+'" s="'+num.style+'"><v>'+num.value+'</v></c>';}
-  return strCell(v,columnName(c)+r,header?1:0);
+  return strCell(v,columnName(c)+r,header?(forceStyle!=null?forceStyle:(built.idx[c]!=null?built.idx[c]:1)):0);
  }).join('')+'</row>';
  const pick=(x,n)=>{const f=x.full||{};if(Object.prototype.hasOwnProperty.call(f,n))return f[n];const k=Object.keys(f).find(h=>norm(h)===norm(n));return k===undefined?'':f[k];};
  const widthsFor=hs=>hs.map(n=>/time|date/i.test(String(n))?22:Math.min(46,Math.max(12,String(n).length+4)));
- const STYLES='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/><numFmt numFmtId="165" formatCode="mm-dd-yyyy hh:mm:ss"/><numFmt numFmtId="166" formatCode="[hh]:mm:ss"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+ const headerStyleFor=n=>{for(const b of (batches||[])){const hs=b.headerStyles||{};const k=Object.keys(hs).find(h=>norm(h)===norm(n));if(k)return hs[k];}return null;};
+ const sourceHeaderHeight=(batches||[]).map(b=>b.headerHeight).find(h=>h>0)||0;
+ const buildStyles=heads=>{
+  const fonts=['<font><sz val="11"/><name val="Calibri"/></font>','<font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font>'];
+  const fills=['<fill><patternFill patternType="none"/></fill>','<fill><patternFill patternType="gray125"/></fill>','<fill><patternFill patternType="solid"><fgColor rgb="FF163749"/><bgColor indexed="64"/></patternFill></fill>'];
+  const borders=['<border/>'];
+  const xfs=['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>','<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/>','<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>','<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>','<xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'];
+  const put=(arr,xml,fb)=>{if(!xml)return fb;const i=arr.indexOf(xml);if(i!==-1)return i;arr.push(xml);return arr.length-1;};
+  const seen=new Map();let last=1;
+  const idx=heads.map(n=>{
+   const s=headerStyleFor(n);
+   if(!s||(!s.font&&!s.fill&&!s.border&&!s.align))return last;
+   const key=s.font+'|'+s.fill+'|'+s.border+'|'+s.align;
+   if(seen.has(key)){last=seen.get(key);return last;}
+   xfs.push('<xf numFmtId="0" fontId="'+put(fonts,s.font,0)+'" fillId="'+put(fills,s.fill,0)+'" borderId="'+put(borders,s.border,0)+'" xfId="0" applyFont="1" applyFill="1" applyBorder="1"'+(s.align?' applyAlignment="1">'+s.align+'</xf>':'/>'));
+   last=xfs.length-1;seen.set(key,last);return last;});
+  const xml='<?xml version="1.0"?><styleSheet xmlns="'+ns+'"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd-mmm-yyyy"/><numFmt numFmtId="165" formatCode="mm-dd-yyyy hh:mm:ss"/><numFmt numFmtId="166" formatCode="[hh]:mm:ss"/></numFmts><fonts count="'+fonts.length+'">'+fonts.join('')+'</fonts><fills count="'+fills.length+'">'+fills.join('')+'</fills><borders count="'+borders.length+'">'+borders.join('')+'</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="'+xfs.length+'">'+xfs.join('')+'</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  return {xml,idx};};
+ const built=buildStyles(head);
  const rels=a=>'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+a.map(([id,type,target])=>'<Relationship Id="'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/'+type+'" Target="'+target+'"/>').join('')+'</Relationships>';
  const sheetXML=(body,widths,extra='')=>'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="'+ns+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="22"/><cols>'+widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols><sheetData>'+body+'</sheetData>'+extra+'</worksheet>';
  const contentTypes=n=>'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+Array.from({length:n},(_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>';
  const body=rowXML(head,1,true)+src.map((x,i)=>rowXML(head.map(n=>pick(x,n)),i+2)).join('');
  zip.file('xl/worksheets/sheet1.xml',sheetXML(body,widthsFor(head),'<autoFilter ref="A1:'+columnName(head.length-1)+(src.length+1)+'"/>'));
  zip.file('xl/workbook.xml','<?xml version="1.0"?><workbook xmlns="'+ns+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Collated" sheetId="1" r:id="rId1"/></sheets></workbook>');
- zip.file('xl/styles.xml',STYLES);
+ zip.file('xl/styles.xml',built.xml);
  zip.file('_rels/.rels',rels([['rId1','officeDocument','xl/workbook.xml']]));
  zip.file('xl/_rels/workbook.xml.rels',rels([['rId1','worksheet','worksheets/sheet1.xml'],['rId2','styles','styles.xml']]));
  zip.file('[Content_Types].xml',contentTypes(1));

@@ -45,6 +45,18 @@ Because they are real values rather than text, they sort and subtract correctly 
 Totals use an elapsed format, so a duration beyond 24 hours reads `30:00:00` rather than
 wrapping to `06:00:00`.
 
+## Header formatting
+
+The header row in both downloads keeps the formatting of your source workbooks — font,
+fill, border, alignment and row height are copied across, so the output looks like the
+files you put in rather than being restyled.
+
+Where workbooks disagree, the first one to define a column sets its look. Columns the tool
+adds — QC Name or QC Comments, when a workbook has neither — inherit the neighbouring
+header style so the row stays consistent. If a workbook carries no formatting at all, the
+built-in style is used. The Settings sheet is the tool's own, so it always uses the
+built-in style.
+
 Collating needs only that workbooks have been added — no allocation required. The
 on-screen preview still shows the key columns so the table stays readable; the full
 column set is in the downloads.
