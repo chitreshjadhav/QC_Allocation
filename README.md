@@ -40,6 +40,11 @@ rows download with your columns intact plus five appended at the end:
 | Criteria | dropdown: Knowledge Gap, Missed to Update or Oversight Error |
 | QC Comment | blank free text |
 
+The export keeps **every** collated row, not just the sampled ones. QC Name and QC Date
+are filled in on the sampled rows and left blank elsewhere, so one file carries the whole
+batch and shows what was picked for review. The Pass/Fail and Criteria dropdowns cover
+every row, so an extra row can still be marked up by hand.
+
 Sampling reuses the QC Allocation tab exactly: the same rounding up, the same draw
 without replacement, and the same even split across reviewers. Reviewer names come from
 Settings, shared by both tabs. The file is named Content_Review_QC_Allocation_<date>.xlsx.

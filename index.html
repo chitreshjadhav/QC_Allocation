@@ -527,6 +527,13 @@ const PASS_FAIL=['Pass','Fail'];
 const CRITERIA=['Knowledge Gap','Missed to Update','Oversight Error'];
 const localToday=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
 let prodAllocation=[];
+// Rows are matched back to the allocation by source file and worksheet row, since
+// allocate() returns copies rather than the original objects.
+const prodRowKey=r=>r.source+'\u0000'+r.row;
+function prodExportRows(){
+ const byKey=new Map(prodAllocation.map(r=>[prodRowKey(r),r.qc]));
+ return prodBatches.reduce((a,b)=>a.concat(b.rows),[]).map(r=>({...r,qc:byKey.get(prodRowKey(r))||''}));
+}
 
 // Column layout shared by the allocation preview and the export, so what you see on
 // screen is the order you get in Excel.
@@ -538,7 +545,7 @@ function prodAllocHead(list){
 function prodCellValue(row,name,today){
  const q=QC_COLS.find(c=>norm(c)===norm(name));
  if(q==='QC Name')return row.qc||'';
- if(q==='QC Date')return today;
+ if(q==='QC Date')return row.qc?today:'';
  if(q==='Pass/Fail'||q==='Criteria'||q==='QC Comment')return '';
  const f=row.full||{};
  if(Object.prototype.hasOwnProperty.call(f,name))return f[name];
@@ -548,8 +555,9 @@ function prodCellValue(row,name,today){
 
 async function exportSerpQcAllocation(list,rows,names){
  names=validateNames(names);
- if(!rows.length)throw Error('Generate a QC allocation first.');
- if(rows.some(r=>!names.includes(r.qc)))throw Error('Every allocation must use a QC name from Settings.');
+ if(!rows.length)throw Error('Add at least one production workbook first.');
+ if(!rows.some(r=>r.qc))throw Error('Generate a QC allocation first.');
+ if(rows.some(r=>r.qc&&!names.includes(r.qc)))throw Error('Every allocation must use a QC name from Settings.');
  const head=prodAllocHead(list);
  const today=localToday();
  const at=n=>head.findIndex(h=>norm(h)===norm(n));
@@ -575,7 +583,7 @@ async function exportSerpQcAllocation(list,rows,names){
   return strCell(v,columnName(c)+r,header?(headerIdx[c]!=null?headerIdx[c]:1):0);
  }).join('')+'</row>';
  const body=rowXML(head,1,true)+rows.map((r,i)=>rowXML(head.map(n=>prodCellValue(r,n,today)),i+2)).join('');
- const last=rows.length+1;
+ const last=rows.length+1; // validation spans every data row, not just the sampled ones
  const listRule=(col,items,title,msg)=>{
   if(col<0)return '';
   const L=columnName(col);
@@ -614,13 +622,15 @@ function renderProdAlloc(){
  const out=$p('prodAllocResult');out.replaceChildren();
  if(!prodAllocation.length)return;
  const head=prodAllocHead(prodBatches),today=localToday();
+ const shown=Math.min(PREVIEW,prodRowTotal());
+ $p('prodAllocNote').textContent='Every collated row is exported; QC Name and QC Date are filled on the sampled rows only. Showing the first '+shown+' of '+prodRowTotal().toLocaleString()+'. Reviewers come from Settings, shared with the QC Allocation tab.';
  const wrap=document.createElement('div');wrap.className='tablewrap';
  const table=document.createElement('table');
  const thead=document.createElement('thead');const hr=document.createElement('tr');
  for(const n of head){const th=document.createElement('th');th.textContent=n;hr.append(th);}
  thead.append(hr);table.append(thead);
  const tbody=document.createElement('tbody');
- for(const r of prodAllocation.slice(0,PREVIEW)){
+ for(const r of prodExportRows().slice(0,PREVIEW)){
   const tr=document.createElement('tr');
   for(const n of head){const td=document.createElement('td');td.textContent=prodCellValue(r,n,today);tr.append(td);}
   tbody.append(tr);
@@ -644,9 +654,9 @@ $p('prodAllocate').addEventListener('click',()=>{
 $p('prodDownloadQc').addEventListener('click',async()=>{
  if(prodBusy)return;prodBusy=true;renderProd();
  try{
-  const bytes=await exportSerpQcAllocation(prodBatches,prodAllocation,qcNames);
+  const bytes=await exportSerpQcAllocation(prodBatches,prodExportRows(),qcNames);
   downloadBytes(bytes,'Content_Review_QC_Allocation_'+localToday()+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  message('QC allocation prepared with every source column plus QC Name, QC Date, Pass/Fail, Criteria and QC Comment.');
+  message(prodRowTotal().toLocaleString()+' rows exported, '+prodAllocation.length.toLocaleString()+' with a QC Name assigned, plus QC Date, Pass/Fail, Criteria and QC Comment.');
  }catch(e){message(e.message,'warn');}
  finally{prodBusy=false;renderProd();}
 });
