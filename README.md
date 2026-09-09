@@ -21,7 +21,7 @@ are per-browser and never leave the device.
 **QC Allocation** samples production reviews and splits them across a QC team. Everything
 below about eligibility, sampling and the two downloads applies to this tab.
 
-**Production Collation** is separate and much simpler: add any number of AI Content
+**Content Review** is separate and much simpler: add any number of AI Content
 Review workbooks and it stacks their **SERP** sheet into one file. Only the sheet named
 SERP is read — Summary, Description and Validation are ignored — and every column is
 kept. Columns are matched across workbooks by header name, so a column missing from one
