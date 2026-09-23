@@ -34,11 +34,16 @@ rows download with your columns intact plus five appended at the end:
 
 | Column | Contents |
 |---|---|
-| QC Name | the assigned reviewer, from the random allocation |
+| QC Name | the assigned reviewer, with dropdown validation against your reviewer list |
 | QC Date | the date the file was created |
 | Pass/Fail | dropdown: Pass or Fail |
 | Criteria | dropdown: Knowledge Gap, Missed to Update or Oversight Error |
 | QC Comment | blank free text |
+
+QC Name, Pass/Fail and Criteria all carry dropdown validation over every row. The
+reviewer list is written as a literal list so the file stays a single sheet; if the list
+would exceed what Excel allows in a literal (255 characters) or a name contains a comma,
+it falls back to a Settings sheet with a named range instead.
 
 The export keeps **every** collated row, not just the sampled ones. QC Name and QC Date
 are filled in on the sampled rows and left blank elsewhere, so one file carries the whole
