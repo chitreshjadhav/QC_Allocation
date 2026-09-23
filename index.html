@@ -139,7 +139,30 @@ function validatePercentage(value) {
  return units/100;
 }
 function sampleSize(total,percentage=100) { return Math.ceil(total*Math.round(validatePercentage(percentage)*100)/10000); }
-function allocate(rows,names,percentage=100) { names=validateNames(names); const count=sampleSize(rows.length,percentage);if(!rows.length)throw Error('Add a workbook with eligible rows first.'); const reviewers=shuffled(names); return shuffled(rows).slice(0,count).map((r,i)=>({...r,qc:reviewers[i%reviewers.length]})); }
+const USER_COLUMN='User Name';
+function userNameOf(row){
+ const f=row&&row.full;
+ if(f){const k=Object.keys(f).find(h=>norm(h)===norm(USER_COLUMN));if(k!==undefined)return String(f[k]).trim();}
+ return Array.isArray(row&&row.values)?String(row.values[2]||'').trim():'';
+}
+// Rows with no user name are their own group rather than being dropped or lumped in
+// with someone else's work.
+function groupByUser(rows){
+ const groups=new Map();
+ for(const r of rows){const key=norm(userNameOf(r))||'\u0000unnamed';
+  if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r);}
+ return groups;
+}
+// Each group rounds up independently, so the total can exceed a flat percentage of the
+// pool. The preview reports the real figure rather than the headline one.
+function plannedSampleSize(rows,percentage=100){
+ let n=0;for(const list of groupByUser(rows).values())n+=sampleSize(list.length,percentage);return n;
+}
+function allocate(rows,names,percentage=100) { names=validateNames(names); if(!rows.length)throw Error('Add a workbook with eligible rows first.');
+ const picked=[];
+ for(const list of groupByUser(rows).values())picked.push(...shuffled(list).slice(0,sampleSize(list.length,percentage)));
+ const reviewers=shuffled(names);
+ return shuffled(picked).map((r,i)=>({...r,qc:reviewers[i%reviewers.length]})); }
 async function readWorkbook(data,filename) {
  if(!/\.(xlsx|xlsm)$/i.test(filename))throw Error('Use .xlsx or .xlsm. Save older .xls or .xlsb files as .xlsx in Excel first.');
  let zip;try{zip=await JSZip.loadAsync(data);}catch{throw Error('Cannot open this workbook. Check that it is a valid, unencrypted .xlsx or .xlsm file.');}
@@ -298,7 +321,7 @@ function setPercentage(value){$('qcPercentage').value=String(value);allocation=[
 function generate(){if(busy)throw Error('Wait for the workbooks to finish loading.');const percentage=validatePercentage($('qcPercentage').value);allocation=allocate(allRows(),qcNames,percentage);page=0;render();message(allocation.length+' of '+allRows().length+' eligible production rows selected at '+percentage+'% and allocated across '+qcNames.length+' QC reviewers. Download Excel to keep this allocation.');return {rows:allocation.length,productionRows:allRows().length,percentage,reviewers:qcNames.length};}
 function render(){
  $('fileCount').textContent=batches.length;$('rowCount').textContent=allRows().length;$('reviewerCount').textContent=qcNames.length;
- let validPercentage=true;try{const percentage=validatePercentage($('qcPercentage').value);$('samplePreview').textContent=percentage+'% of '+allRows().length+' eligible production rows = '+sampleSize(allRows().length,percentage)+' rows for QC.';$('qcPercentage').setAttribute('aria-invalid','false');}catch(e){validPercentage=false;$('samplePreview').textContent=e.message;$('qcPercentage').setAttribute('aria-invalid','true');}
+ let validPercentage=true;try{const percentage=validatePercentage($('qcPercentage').value);$('samplePreview').textContent=percentage+'% of each of '+groupByUser(allRows()).size+' production user(s) = '+plannedSampleSize(allRows(),percentage)+' of '+allRows().length+' eligible rows for QC.';$('qcPercentage').setAttribute('aria-invalid','false');}catch(e){validPercentage=false;$('samplePreview').textContent=e.message;$('qcPercentage').setAttribute('aria-invalid','true');}
  $('qcPercentage').disabled=busy;$('allocate').disabled=busy||!allRows().length||!validPercentage;$('download').disabled=busy||!allocation.length;$('collate').disabled=busy||!batches.length;$('choose').disabled=busy;$('clear').disabled=busy||(!batches.length&&!errors.length);$('saveSettings').disabled=busy;
  $('allocate').textContent=allocation.length?'Shuffle again':'Generate allocation';$('resultTitle').textContent=allocation.length?'QC Allocation':'Eligible rows';
  $('filelist').replaceChildren();for(const [i,b]of batches.entries()){const box=document.createElement('div');box.className='file';box.innerHTML='<div class="file-main"><div class="file-title"></div><span class="tag"></span><details><summary>Import details</summary></details></div><button aria-label="Remove workbook">×</button>';box.querySelector('.file-title').textContent=b.name;box.querySelector('.tag').textContent=b.rows.length+' eligible / '+b.scanned+' source rows';for(const s of b.sheets){const p=document.createElement('p');p.textContent=s.name+': '+s.status+(s.status==='Imported'?' · '+s.eligible+' eligible':'');box.querySelector('details').append(p);}const btn=box.querySelector('button');btn.disabled=busy;btn.setAttribute('aria-label','Remove '+b.name);btn.onclick=()=>{batches.splice(i,1);allocation=[];page=0;render();message('Workbook removed. Generate a new allocation for this batch.');};$('filelist').append(box);}
@@ -609,7 +632,8 @@ function renderProdAlloc(){
  const prev=$p('prodSamplePreview');
  if(!total)prev.textContent='Add workbooks to size the sample.';
  else if(pct===null)prev.textContent='Enter a percentage between 0.01 and 100.';
- else prev.textContent=pct+'% of '+total.toLocaleString()+' collated rows = '+sampleSize(total,pct).toLocaleString()+' rows for QC.';
+ else {const all=prodBatches.reduce((a,b)=>a.concat(b.rows),[]);
+  prev.textContent=pct+'% of each of '+groupByUser(all).size+' production user(s) = '+plannedSampleSize(all,pct).toLocaleString()+' of '+total.toLocaleString()+' collated rows for QC.';}
  $p('prodAllocate').disabled=!total||pct===null||prodBusy;
  $p('prodDownloadQc').disabled=!prodAllocation.length||prodBusy;
  $p('prodAllocate').textContent=prodAllocation.length?'Shuffle again':'Generate QC allocation';

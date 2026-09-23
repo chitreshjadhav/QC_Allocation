@@ -102,10 +102,18 @@ column set is in the downloads.
 - A row is eligible only if it has a non-blank **Identifier** and **Review Type =
   Production**. Matching ignores case and surrounding whitespace; Identifier `0` counts
   as a value.
-- The percentage applies to the **combined** eligible production across all imported
-  files, not per person or workbook.
-- Selected rows = eligible × percentage ÷ 100, **rounded up**. 150 eligible at 10%
-  selects 15; at 25%, 38.
+- Eligible rows are pooled across all imported files, then grouped by production user;
+  the percentage applies **within each user**, not to the pool as a whole.
+- Rows selected for a user = that user's eligible rows × percentage ÷ 100, **rounded
+  up**. A user with 150 eligible rows contributes 15 at 10%, and 38 at 25%.
+- Sampling is **stratified by production user**: the percentage applies within each
+  User Name separately, so everyone is reviewed at the same rate and a light producer is
+  never missed by chance. Rows with no user name form their own group.
+- Because each user rounds up independently, the total can exceed a flat percentage of
+  the pool: three users with 11 rows each at 10% gives 2 apiece, 6 rather than 4. The
+  on-screen preview reports the real figure.
+- Selected rows are then shuffled before reviewers are assigned, so one person's work is
+  spread across the QC team rather than landing with a single reviewer.
 - Sampling is without replacement, using `crypto.getRandomValues`. **Shuffle again**
   draws a fresh sample and redistributes it.
 - Percentages from 0.01 to 100 with up to two decimal places.
